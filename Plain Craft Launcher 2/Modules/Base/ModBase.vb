@@ -11,12 +11,12 @@ Public Module ModBase
 #Region "声明"
 
     '下列版本信息由更新器自动修改
-    Public Const VersionBaseName As String = "2.7.2" '不含分支前缀的显示用版本名
-    Public Const VersionStandardCode As String = "2.7.2." & VersionBranchCode '标准格式的四段式版本号
+    Public Const VersionBaseName As String = "2.7.4" '不含分支前缀的显示用版本名
+    Public Const VersionStandardCode As String = "2.7.4." & VersionBranchCode '标准格式的四段式版本号
 #If BETA Then
-    Public Const VersionCode As Integer = 321 'Release
+    Public Const VersionCode As Integer = 323 'Release
 #Else
-    Public Const VersionCode As Integer = 322 'Snapshot
+    Public Const VersionCode As Integer = 325 'Snapshot
 #End If
     '自动生成的版本信息
     Public Const VersionDisplayName As String = VersionBranchName & " " & VersionBaseName
@@ -26,7 +26,7 @@ Public Module ModBase
 #ElseIf BETA Then
     Public Const VersionBranchName As String = "Release"
     Public Const VersionBranchCode As String = "50"
-#ElseIf DEBUG Then
+#Else
     Public Const VersionBranchName As String = "Debug"
     Public Const VersionBranchCode As String = "100"
 #End If
@@ -595,7 +595,7 @@ Public Module ModBase
         Try
             Dim parentKey As Microsoft.Win32.RegistryKey, softKey As Microsoft.Win32.RegistryKey
             parentKey = My.Computer.Registry.CurrentUser
-            softKey = parentKey.OpenSubKey("Software\PCL", True)
+            softKey = parentKey.OpenSubKey("Software\" & RegFolder, True)
             If softKey Is Nothing Then
                 ReadReg = DefaultValue '不存在则返回默认值
             Else
@@ -616,8 +616,8 @@ Public Module ModBase
         Try
             Dim parentKey As Microsoft.Win32.RegistryKey, softKey As Microsoft.Win32.RegistryKey
             parentKey = My.Computer.Registry.CurrentUser
-            softKey = parentKey.OpenSubKey("Software\PCL", True)
-            If softKey Is Nothing Then softKey = parentKey.CreateSubKey("Software\PCL") '如果不存在就创建  
+            softKey = parentKey.OpenSubKey("Software\" & RegFolder, True)
+            If softKey Is Nothing Then softKey = parentKey.CreateSubKey("Software\" & RegFolder) '如果不存在就创建  
             softKey.SetValue(Key, Value)
         Catch ex As Exception
             Log(ex, "写入注册表出错：" & Key, If(ShowException, LogLevel.Hint, LogLevel.Developer))
@@ -1451,7 +1451,8 @@ Re:
         Try
             Return JsonConvert.DeserializeObject(Data, New JsonSerializerSettings With {.DateTimeZoneHandling = DateTimeZoneHandling.Local})
         Catch ex As Exception
-            Throw New Exception("格式化 json 对象失败：" & If(If(Data, "").Length > 10000, Data.Substring(0, 100) & "...", Data))
+            Dim Length As Integer = If(Data, "").Length
+            Throw New Exception("格式化 json 对象失败：" & If(Length > 10000, Data.Substring(0, 100) & $"...(全长 {Length} 个字符)..." & Right(Data, 100), Data))
         End Try
     End Function
 
@@ -1545,6 +1546,51 @@ Re:
     End Function
 
     ''' <summary>
+    ''' 获取在子字符串之前的部分。
+    ''' 会裁切尽可能多的内容，但如果未找到子字符串则不裁切。
+    ''' </summary>
+    <Extension> Public Function Before(Str As String, Text As String, Optional IgnoreCase As Boolean = False) As String
+        Dim Pos As Integer = If(String.IsNullOrEmpty(Text), -1, Str.IndexOfF(Text, IgnoreCase))
+        If Pos >= 0 Then
+            Return Str.Substring(0, Pos)
+        Else
+            Return Str
+        End If
+    End Function
+    ''' <summary>
+    ''' 获取在子字符串之后的部分。
+    ''' 会裁切尽可能多的内容，但如果未找到子字符串则不裁切。
+    ''' </summary>
+    <Extension> Public Function After(Str As String, Text As String, Optional IgnoreCase As Boolean = False) As String
+        Dim Pos As Integer = If(String.IsNullOrEmpty(Text), -1, Str.LastIndexOfF(Text, IgnoreCase))
+        If Pos >= 0 Then
+            Return Str.Substring(Pos + Text.Length)
+        Else
+            Return Str
+        End If
+    End Function
+    ''' <summary>
+    ''' 获取处于两个子字符串之间的部分。
+    ''' 会裁切尽可能多的内容：匹配开始使用 LastIndexOf，匹配结束使用 IndexOf，但如果未找到子字符串则不裁切。
+    ''' </summary>
+    <Extension> Public Function Between(Str As String, Before As String, After As String, Optional IgnoreCase As Boolean = False) As String
+        Dim StartPos As Integer = If(String.IsNullOrEmpty(Before), -1, Str.LastIndexOfF(Before, IgnoreCase))
+        If StartPos >= 0 Then
+            StartPos += Before.Length
+        Else
+            StartPos = 0
+        End If
+        Dim EndPos As Integer = If(String.IsNullOrEmpty(After), -1, Str.IndexOfF(After, StartPos, IgnoreCase))
+        If EndPos >= 0 Then
+            Return Str.Substring(StartPos, EndPos - StartPos)
+        ElseIf StartPos > 0 Then
+            Return Str.Substring(StartPos)
+        Else
+            Return Str
+        End If
+    End Function
+
+    ''' <summary>
     ''' 高速的 StartsWith。
     ''' </summary>
     <Extension> <MethodImpl(MethodImplOptions.AggressiveInlining)>
@@ -1573,11 +1619,25 @@ Re:
         Return Str.IndexOf(SubStr, If(IgnoreCase, StringComparison.OrdinalIgnoreCase, StringComparison.Ordinal))
     End Function
     ''' <summary>
+    ''' 高速的 IndexOf。
+    ''' </summary>
+    <Extension> <MethodImpl(MethodImplOptions.AggressiveInlining)>
+    Public Function IndexOfF(Str As String, SubStr As String, StartIndex As Integer, Optional IgnoreCase As Boolean = False) As Integer
+        Return Str.IndexOf(SubStr, StartIndex, If(IgnoreCase, StringComparison.OrdinalIgnoreCase, StringComparison.Ordinal))
+    End Function
+    ''' <summary>
     ''' 高速的 LastIndexOf。
     ''' </summary>
     <Extension> <MethodImpl(MethodImplOptions.AggressiveInlining)>
     Public Function LastIndexOfF(Str As String, SubStr As String, Optional IgnoreCase As Boolean = False) As Integer
         Return Str.LastIndexOf(SubStr, If(IgnoreCase, StringComparison.OrdinalIgnoreCase, StringComparison.Ordinal))
+    End Function
+    ''' <summary>
+    ''' 高速的 LastIndexOf。
+    ''' </summary>
+    <Extension> <MethodImpl(MethodImplOptions.AggressiveInlining)>
+    Public Function LastIndexOfF(Str As String, SubStr As String, StartIndex As Integer, Optional IgnoreCase As Boolean = False) As Integer
+        Return Str.LastIndexOf(SubStr, StartIndex, If(IgnoreCase, StringComparison.OrdinalIgnoreCase, StringComparison.Ordinal))
     End Function
 
     ''' <summary>
@@ -1817,15 +1877,11 @@ Re:
     ''' <summary>
     ''' 数组去重。
     ''' </summary>
-    Public Function Distinct(Of T)(Arr As ICollection(Of T), Optional IsEqual As CompareThreadStart(Of T) = Nothing) As List(Of T)
+    <Extension> Public Function Distinct(Of T)(Arr As ICollection(Of T), IsEqual As CompareThreadStart(Of T)) As List(Of T)
         Dim ResultArray As New List(Of T)
         For i = 0 To Arr.Count - 1
             For ii = i + 1 To Arr.Count - 1
-                If IsEqual Is Nothing Then
-                    If Arr(i).Equals(Arr(ii)) Then GoTo NextElement
-                Else
-                    If IsEqual(Arr(i), Arr(ii)) Then GoTo NextElement
-                End If
+                If IsEqual(Arr(i), Arr(ii)) Then GoTo NextElement
             Next
             ResultArray.Add(Arr(i))
 NextElement:
@@ -2073,7 +2129,7 @@ NextElement:
     ''' 按照既定的函数进行选择排序。
     ''' </summary>
     ''' <param name="SortRule">传入两个对象，若第一个对象应该排在前面，则返回 True。</param>
-    Public Function Sort(Of T)(List As IList(Of T), SortRule As CompareThreadStart(Of T)) As List(Of T)
+    <Extension> Public Function Sort(Of T)(List As IList(Of T), SortRule As CompareThreadStart(Of T)) As List(Of T)
         Dim NewList As New List(Of T)
         While List.Any
             Dim Highest = List(0)

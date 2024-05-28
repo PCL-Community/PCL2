@@ -517,7 +517,7 @@ RequestFinished:
         ''' </summary>
         Finish = 6
         ''' <summary>
-        ''' 已失败。
+        ''' 已失败或中断。
         ''' </summary>
         [Error] = 7
     End Enum
@@ -781,7 +781,7 @@ RequestFinished:
         ''' <summary>
         ''' 为不需要分割的小文件进行临时存储。
         ''' </summary>
-        Private SmailFileCache As List(Of Byte)
+        Private SmailFileCache As Queue(Of Byte)
 
         ''' <summary>
         ''' 文件的已下载大小。
@@ -1035,6 +1035,7 @@ StartThread:
                 SecretHeadersSign(Info.Source.Url, HttpRequest, UseBrowserUserAgent)
                 Dim ContentLength As Long = 0
                 Using HttpResponse As HttpWebResponse = HttpRequest.GetResponse()
+                    If State = NetState.Error Then GoTo SourceBreak '快速中断
                     If ModeDebug AndAlso HttpResponse.ResponseUri.OriginalString <> Info.Source.Url Then
                         Log($"[Download] {LocalName} {Info.Uuid}#：重定向至 {HttpResponse.ResponseUri.OriginalString}")
                     End If
@@ -1100,7 +1101,7 @@ NotSupportRange:
                     '创建缓存文件
                     If IsNoSplit Then
                         Info.Temp = Nothing
-                        SmailFileCache = New List(Of Byte)
+                        SmailFileCache = New Queue(Of Byte)
                     Else
                         Info.Temp = PathTemp & "Download\" & Uuid & "_" & Info.Uuid & "_" & RandomInteger(0, 999999) & ".tmp"
                         ResultStream = New FileStream(Info.Temp, FileMode.Create, FileAccess.Write, FileShare.Read)
@@ -1151,9 +1152,15 @@ NotSupportRange:
                                 Info.DownloadDone += RealDataCount
                                 If IsNoSplit Then
                                     If HttpData.Count = RealDataCount Then
-                                        SmailFileCache.AddRange(HttpData)
+                                        'SmailFileCache.AddRange(HttpData)
+                                        For Each B In HttpData
+                                            SmailFileCache.Enqueue(B)
+                                        Next
                                     Else
-                                        SmailFileCache.AddRange(HttpData.ToList.GetRange(0, RealDataCount))
+                                        'SmailFileCache.AddRange(HttpData.ToList.GetRange(0, RealDataCount))
+                                        For i = 0 To RealDataCount - 1
+                                            SmailFileCache.Enqueue(HttpData(i))
+                                        Next
                                     End If
                                 Else
                                     ResultStream.Write(HttpData, 0, RealDataCount)
@@ -1379,14 +1386,7 @@ Retry:
                 '凉凉
                 State = NetState.Error
             End SyncLock
-            Try
-                If File.Exists(LocalPath) Then File.Delete(LocalPath)
-            Catch
-            End Try
-            SyncLock NetManager.LockRemain
-                NetManager.FileRemain -= 1
-                Log("[Download] " & LocalName & "：已失败，剩余文件 " & NetManager.FileRemain)
-            End SyncLock
+            InterruptAndDelete()
             For Each Task In Tasks
                 Task.OnFileFail(Me)
             Next
@@ -1395,7 +1395,7 @@ Retry:
         ''' 下载中断。
         ''' </summary>
         Public Sub Abort(CausedByTask As LoaderDownload)
-            '确认任务移除
+            '从特定任务中移除，如果它还属于其他任务，则继续下载
             SyncLock LockTasks
                 Tasks.Remove(CausedByTask)
                 If Tasks.Any Then Exit Sub
@@ -1405,9 +1405,14 @@ Retry:
                 If State >= NetState.Finish Then Exit Sub
                 State = NetState.Error
             End SyncLock
+            InterruptAndDelete()
+        End Sub
+        Private Sub InterruptAndDelete()
+            On Error Resume Next
+            If File.Exists(LocalPath) Then File.Delete(LocalPath)
             SyncLock NetManager.LockRemain
                 NetManager.FileRemain -= 1
-                If ModeDebug Then Log("[Download] " & LocalName & "：已取消，剩余文件 " & NetManager.FileRemain)
+                Log($"[Download] {LocalName}：状态 {State}，剩余文件 {NetManager.FileRemain}")
             End SyncLock
         End Sub
 
@@ -1457,7 +1462,9 @@ Retry:
         Public Overrides Property Progress As Double
             Get
                 If State >= LoadState.Finished Then Return 1
-                If Not Files.Any() Then Return 0 '必须返回 0，否则在获取列表的时候会错觉已经下载完了
+                SyncLock FilesLock
+                    If Not Files.Any() Then Return 0 '必须返回 0，否则在获取列表的时候会错觉已经下载完了
+                End SyncLock
                 Return _Progress
             End Get
             Set(value As Double)
